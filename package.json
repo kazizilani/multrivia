@@ -1,3 +1,4 @@
+
 {
   "name": "multrivia",
   "version": "0.1.0",
@@ -25,10 +26,5 @@
     "tailwindcss": "4.3.3",
     "typescript": "^5"
   },
-  "packageManager": "pnpm@12.10.1",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "protobufjs"
-    ]
-  }
+  "packageManager": "pnpm@12.10.1"
 }
