@@ -6,15 +6,6 @@ export const runtime = "nodejs";
 
 const apiKey = process.env.GEMINI_API_KEY;
 
-const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
-
-if (!ai) {
-  Response.json(
-    { error: "GEMINI_API_KEY is not configured." },
-    { status: 500 }
-  );
-}
-
 const triviaSchema = {
   type: Type.OBJECT,
   properties: {
@@ -39,7 +30,8 @@ const fallbackQuestions = [
     question: "Which planet is known as the Red Planet?",
     options: ["Venus", "Mars", "Jupiter", "Saturn"],
     correctAnswerIndex: 1,
-    explanation: "Mars is known as the Red Planet because iron minerals on its surface create a reddish appearance.",
+    explanation:
+      "Mars is known as the Red Planet because iron minerals on its surface create a reddish appearance.",
     topic: "science",
     difficulty: "easy",
   },
@@ -47,7 +39,8 @@ const fallbackQuestions = [
     question: "What is the largest ocean on Earth?",
     options: ["Atlantic", "Indian", "Pacific", "Arctic"],
     correctAnswerIndex: 2,
-    explanation: "The Pacific Ocean is the largest and deepest ocean on Earth.",
+    explanation:
+      "The Pacific Ocean is the largest and deepest ocean on Earth.",
     topic: "geography",
     difficulty: "easy",
   },
@@ -60,7 +53,8 @@ const fallbackQuestions = [
       "Mark Twain",
     ],
     correctAnswerIndex: 1,
-    explanation: "William Shakespeare wrote the tragedy Romeo and Juliet.",
+    explanation:
+      "William Shakespeare wrote the tragedy Romeo and Juliet.",
     topic: "history",
     difficulty: "medium",
   },
@@ -68,7 +62,8 @@ const fallbackQuestions = [
     question: "What is the chemical symbol for gold?",
     options: ["Ag", "Fe", "Au", "Cu"],
     correctAnswerIndex: 2,
-    explanation: "Au is the chemical symbol for gold, derived from the Latin word aurum.",
+    explanation:
+      "Au is the chemical symbol for gold, derived from the Latin word aurum.",
     topic: "science",
     difficulty: "medium",
   },
@@ -76,7 +71,8 @@ const fallbackQuestions = [
     question: "How many sides does a hexagon have?",
     options: ["Five", "Six", "Seven", "Eight"],
     correctAnswerIndex: 1,
-    explanation: "A hexagon is a polygon with six sides.",
+    explanation:
+      "A hexagon is a polygon with six sides.",
     topic: "general knowledge",
     difficulty: "easy",
   },
@@ -85,7 +81,18 @@ const fallbackQuestions = [
 const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-async function generateTrivia(prompt: string) {
+function getGeminiClient() {
+  if (!apiKey) {
+    return null;
+  }
+
+  return new GoogleGenAI({ apiKey });
+}
+
+async function generateTrivia(
+  ai: GoogleGenAI,
+  prompt: string
+) {
   const models = [
     "gemini-3.1-flash-lite",
     "gemini-flash-latest",
@@ -94,7 +101,9 @@ async function generateTrivia(prompt: string) {
   for (const model of models) {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        console.log(`Trying ${model}, attempt ${attempt + 1}`);
+        console.log(
+          `Trying ${model}, attempt ${attempt + 1}`
+        );
 
         const response = await ai.models.generateContent({
           model,
@@ -111,17 +120,29 @@ async function generateTrivia(prompt: string) {
         }
 
         return JSON.parse(response.text);
-      } catch (error: any) {
-        const status = error?.status;
+      } catch (error: unknown) {
+        const status =
+          typeof error === "object" &&
+          error !== null &&
+          "status" in error
+            ? Number(error.status)
+            : undefined;
 
-        console.error(`Gemini ${model} error:`, status);
+        console.error(
+          `Gemini ${model} error:`,
+          status,
+          error
+        );
+
+        if (status === 404) {
+          break;
+        }
 
         if (
-          status !== 503 &&
           status !== 429 &&
-          status !== 500
+          status !== 500 &&
+          status !== 503
         ) {
-          if (status === 404) break;
           throw error;
         }
 
@@ -135,22 +156,21 @@ async function generateTrivia(prompt: string) {
   throw new Error("All Gemini models unavailable.");
 }
 
-function getFallback(topic: string, difficulty: string) {
+function getFallback(topic: string) {
   const normalizedTopic = topic.toLowerCase();
 
   const matching = fallbackQuestions.filter(
-    (q) =>
-      normalizedTopic.includes(q.topic) ||
-      q.topic.includes(normalizedTopic)
+    (question) =>
+      normalizedTopic.includes(question.topic) ||
+      question.topic.includes(normalizedTopic)
   );
 
   const pool = matching.length
     ? matching
     : fallbackQuestions;
 
-  const question = pool[
-    Math.floor(Math.random() * pool.length)
-  ];
+  const question =
+    pool[Math.floor(Math.random() * pool.length)];
 
   return {
     question: question.question,
@@ -166,7 +186,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
 
     const topic =
-      typeof body.topic === "string" && body.topic.trim()
+      typeof body.topic === "string" &&
+      body.topic.trim()
         ? body.topic.trim().slice(0, 150)
         : "General Knowledge";
 
@@ -177,6 +198,18 @@ export async function POST(req: NextRequest) {
     ].includes(body.difficulty)
       ? body.difficulty
       : "medium";
+
+    // Check API key at request time, not build time.
+    const ai = getGeminiClient();
+
+    if (!ai) {
+      console.error("GEMINI_API_KEY is missing.");
+
+      return NextResponse.json(
+        getFallback(topic),
+        { status: 200 }
+      );
+    }
 
     const prompt = `
       Generate one unique ${difficulty} trivia question
@@ -190,13 +223,17 @@ export async function POST(req: NextRequest) {
     `;
 
     try {
-      const trivia = await generateTrivia(prompt);
+      const trivia = await generateTrivia(ai, prompt);
 
       if (
         !trivia ||
         typeof trivia.question !== "string" ||
         !Array.isArray(trivia.options) ||
         trivia.options.length !== 4 ||
+        !trivia.options.every(
+          (option: unknown) => typeof option === "string"
+        ) ||
+        new Set(trivia.options).size !== 4 ||
         !Number.isInteger(trivia.correctAnswerIndex) ||
         trivia.correctAnswerIndex < 0 ||
         trivia.correctAnswerIndex > 3 ||
@@ -216,7 +253,7 @@ export async function POST(req: NextRequest) {
       );
 
       return NextResponse.json(
-        getFallback(topic, difficulty),
+        getFallback(topic),
         { status: 200 }
       );
     }
