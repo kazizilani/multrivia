@@ -6,11 +6,14 @@ export const runtime = "nodejs";
 
 const apiKey = process.env.GEMINI_API_KEY;
 
-if (!apiKey) {
-  throw new Error("GEMINI_API_KEY is missing.");
-}
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
-const ai = new GoogleGenAI({ apiKey });
+if (!ai) {
+  Response.json(
+    { error: "GEMINI_API_KEY is not configured." },
+    { status: 500 }
+  );
+}
 
 const triviaSchema = {
   type: Type.OBJECT,
